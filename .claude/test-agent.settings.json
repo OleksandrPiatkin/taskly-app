@@ -1,0 +1,61 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .claude/skills/run-tests-and-coverage/scripts/run_tests.sh *)",
+      "Bash(python3 .claude/skills/analyze-pr-changes/scripts/changed_files.py *)",
+      "Bash(python -m pytest *)",
+      "Bash(npx --no-install vitest *)",
+      "Bash(npx vitest run *)",
+      "Bash(npm test *)",
+      "Bash(npm run test *)",
+      "Bash(npm run test:coverage *)",
+      "Bash(npm run typecheck)",
+      "Bash(git diff *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(cd *)",
+      "Bash(ls *)",
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write"
+    ],
+    "deny": [
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(gh *)",
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git reset *)",
+      "Bash(git config *)",
+      "Bash(npm install *)",
+      "Bash(npm i *)",
+      "Bash(npx -y *)",
+      "Bash(pip install *)",
+      "Bash(python -m pip *)",
+      "Bash(rm -rf *)",
+      "Bash(env)",
+      "Bash(printenv *)",
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_test_paths.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
