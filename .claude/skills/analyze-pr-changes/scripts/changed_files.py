@@ -64,6 +64,21 @@ def changed_from_base(base):
     return changed, deleted
 
 
+def dirty_paths():
+    """Paths already modified or untracked before the agent starts (excluding agent output)."""
+    out = git("status", "--porcelain", "-z", "--untracked-files=all")
+    entries, skip_next = [], False
+    for item in out.split("\0"):
+        if skip_next or not item:
+            skip_next = False
+            continue
+        status, path = item[:2], item[3:]
+        skip_next = status.startswith(("R", "C"))  # rename/copy: next field is the old path
+        if not path.startswith(".agent-results/"):
+            entries.append(path)
+    return sorted(entries)
+
+
 def expand(paths):
     files = []
     for raw in paths:
@@ -137,6 +152,7 @@ def main():
     else:
         changed, deleted = expand(args.files), []
     result = {"mode": "diff" if args.base else "files", "base": args.base, **classify(changed, deleted)}
+    result["preexisting_changes"] = dirty_paths()
 
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps(result, indent=2) + "\n")
