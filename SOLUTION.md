@@ -109,7 +109,6 @@ Links: [bot PR #7](https://github.com/OleksandrPiatkin/taskly-app/pull/7) · [st
 
 Found along the way:
 - An earlier run on the same PR (before `main` was merged into it) caught the PR breaking `test_factory.py`, which asserted the exact route list. The agent fixed the test without saying so. Since then, every baseline failure must be reported as a finding, and the skills require membership assertions instead of exact lists.
-- The first full-workflow run failed in `make_patch.sh`: `git add` rejects a pathspec that names a gitignored path (`.agent-results`), even as an exclude. The fix was to exclude that path from `git diff` only.
 
 ## Assumptions
 
