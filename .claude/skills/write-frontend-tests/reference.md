@@ -28,6 +28,13 @@ Read the component's props type before rendering; pass `vi.fn()` for every callb
 
 ## Hooks using TanStack Query
 
+If `src/test/queryClientWrapper.tsx` exists, **reuse its `createQueryWrapper()`** (returns
+`{ client, wrapper }` with a fresh client per call) instead of defining a new wrapper. The example
+below shows what it does; only define one inline if the helper is missing.
+
+Waiting: TanStack Query state (e.g. `useIsMutating`) can update a tick after the mutation settles —
+assert it with `await waitFor(...)`, never with fixed sleeps.
+
 ```tsx
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
