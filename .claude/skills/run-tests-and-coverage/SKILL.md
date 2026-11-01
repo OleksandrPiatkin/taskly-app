@@ -30,7 +30,9 @@ Output: `.agent-results/results-<label>.json` (default label `final`) plus per-s
 ## How to use the results
 
 - `status: failed` → read the suite log, find the failing test names, fix **tests you wrote**.
-  Failures that also exist in the `baseline` run are pre-existing: report them, don't touch them.
+  Failures that also exist in the `baseline` run are pre-existing: handle them as the agent's
+  workflow step 2 says (update only if the PR intentionally broke them, with a finding; otherwise
+  report and don't touch).
 - Compare `baseline` vs `final` coverage for the report; quote numbers exactly as written.
 - Run a single file while iterating (commands in `CLAUDE.md`), but always finish with a full
   `all` run labelled `final` — that is the run the report and the CI workflow trust.

@@ -18,5 +18,3 @@
 ### Findings
 <!-- omit the section if empty -->
 - `{{path}}:{{line}}` — {{issue}}
-
-<sub>Generated tests are proposed in a separate PR for human review. Full logs are attached to the workflow run.</sub>
