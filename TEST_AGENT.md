@@ -216,7 +216,8 @@ Guidelines:
 | Repeated permission prompts for Bash | add the exact command pattern to `allow` in `test-agent.settings.json` |
 | `Blocked write to …` | the path guard works as intended; extend `ALLOWED` only for a legitimate test location |
 | Backend coverage looks different from expected | pytest must run from `backend/` (output shows `configfile: pyproject.toml`); the script does this — don't run pytest from the repo root |
-| `ModuleNotFoundError` in backend tests | create/install `backend/.venv` (see [Setup](#setup)) |
+| Backend `exit_code: 127` in results | no Python found: create `backend/.venv` (see [Setup](#setup)); the first line of `.agent-results/backend-<label>.log` shows which interpreter was used |
+| `ModuleNotFoundError` / `No module named pytest` in backend tests | create/install `backend/.venv` (see [Setup](#setup)) |
 | `vitest: not found` | run `npm ci` in `frontend/` |
 | Agent stops before reporting | raise `--max-turns` or narrow the scope of the prompt |
 | `StarletteDeprecationWarning` about `httpx` | known warning from FastAPI's TestClient; ignore it |

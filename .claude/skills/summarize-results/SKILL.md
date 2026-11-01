@@ -24,7 +24,9 @@ Inputs: `.agent-results/changes.json`, `.agent-results/results-baseline.json`,
 ```
 
 - `failed` if the final run is red or you could not finish; explain why in `summary`.
-- `files` must match the real working-tree changes exactly — CI verifies this.
+- `files` = current `git status --porcelain` paths **minus** `preexisting_changes` from
+  `changes.json` (minus `.agent-results/`). It must match your real changes exactly — CI verifies this.
+  If `preexisting_changes` is not empty, mention it in one line under "Things to know".
 
 ## 2. `.agent-results/report.md` (human-readable, posted to the PR)
 

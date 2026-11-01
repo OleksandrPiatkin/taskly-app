@@ -27,6 +27,9 @@ The script prints JSON and also writes it to `.agent-results/changes.json`:
 - `backend.tests` / `frontend.tests` — test files the PR already touched
 - `skipped` — files out of scope, each with a `reason`
 - `deleted` — removed files (check whether their tests should be removed too; report, do not delete)
+- `preexisting_changes` — files already modified/untracked in the working tree before you started.
+  They are not your work: never edit them unless they are test files you were asked to cover, and
+  never list them in the report as yours. Run this script **before** writing anything.
 
 Do not reclassify files by hand; if the script is wrong, report it.
 

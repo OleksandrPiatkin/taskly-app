@@ -14,10 +14,21 @@ mkdir -p "$OUT"
 
 backend_exit=""; frontend_exit=""; typecheck_exit=""
 
-if [[ "$SUITE" == all || "$SUITE" == backend ]]; then
-  (cd "$ROOT/backend" && python -m pytest -q -p no:cacheprovider \
+# Local runs use the project virtualenv; CI has no venv and uses the job's Python.
+# Plain `python` may not exist (e.g. Ubuntu without an activated venv), so fall back to python3.
+PYTHON=""
+for candidate in "$ROOT/backend/.venv/bin/python" python python3; do
+  if command -v "$candidate" >/dev/null 2>&1; then PYTHON="$(command -v "$candidate")"; break; fi
+done
+
+if [[ "$SUITE" == all || "$SUITE" == backend ]] && [[ -z "$PYTHON" ]]; then
+  echo "No Python interpreter found. Create backend/.venv (see CLAUDE.md)." >"$OUT/backend-$LABEL.log"
+  backend_exit=127
+elif [[ "$SUITE" == all || "$SUITE" == backend ]]; then
+  echo "Using Python: $PYTHON" >"$OUT/backend-$LABEL.log"
+  (cd "$ROOT/backend" && "$PYTHON" -m pytest -q -p no:cacheprovider \
       --cov=app --cov-report=term-missing --cov-report=xml --cov-report=json \
-      --junitxml="$OUT/backend-junit.xml") >"$OUT/backend-$LABEL.log" 2>&1
+      --junitxml="$OUT/backend-junit.xml") >>"$OUT/backend-$LABEL.log" 2>&1
   backend_exit=$?
 fi
 
