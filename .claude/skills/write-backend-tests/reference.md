@@ -2,6 +2,18 @@
 
 All examples follow the existing tests in `backend/tests/`. Imports are absolute from `app.`.
 
+## Membership, not exact collections
+
+When the behaviour is "X is present", assert membership — never equality with a full collection
+(all routes, all keys, every call). Exact collections break on every unrelated addition.
+
+```python
+paths = app.openapi()["paths"]
+assert {"get", "post"} <= set(paths["/api/todos"])      # not: assert paths.keys() == {...}
+```
+
+Use exact equality only when exactness *is* the behaviour (e.g. a response body, `assert_called_once_with`).
+
 ## Router — via the `client` fixture
 
 `client` mounts only the todos router with `get_repository` overridden by `repository_mock`

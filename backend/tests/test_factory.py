@@ -30,11 +30,14 @@ def test_create_app_registers_health_and_todo_routes():
     app = factory.create_app("sqlite://")
     # Included routers are not flattened into app.routes; the OpenAPI schema is the public contract.
     paths = app.openapi()["paths"]
-    assert {path: set(operations) for path, operations in paths.items()} == {
+    expected = {
         "/api/health": {"get"},
         "/api/todos": {"get", "post"},
         "/api/todos/{todo_id}": {"get", "patch", "delete"},
     }
+    for path, operations in expected.items():
+        assert path in paths
+        assert operations <= set(paths[path])
 
 
 def test_create_app_wires_lifespan_session_factory_into_requests(monkeypatch):

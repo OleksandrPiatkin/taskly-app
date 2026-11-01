@@ -1,29 +1,96 @@
 name: Agent tests
 
+# PR test agent. See docs/TEST_AGENT.md.
+#
+#   analyze ──► generate ──► verify ──► publish ──┐
+#   tests ────────────────────────────────────────┴──► report (always)
+#
+# Trust model: only `generate` sees a secret (CLAUDE_CODE_OAUTH_TOKEN), and only `publish` and
+# `report` can write. Jobs that check out the PR head run helper scripts from the BASE branch
+# (git archive → $RUNNER_TEMP/trusted, python3 -I), never the PR's copies. Agent output is
+# untrusted: verify and publish both re-check the patch with guard_patch.py.
+
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: agent-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  agent-tests:
+  analyze:
+    # Skip drafts, forks and the agent's own branches (repeated on every job).
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'agent/')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      has_testable_changes: ${{ steps.classify.outputs.has_testable_changes }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0 # full history so origin/<base_ref> exists for the diff
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0 # origin/<base> and the merge-base for the diff
           persist-credentials: false
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Classify changed files (base copy of changed_files.py)
+        id: classify
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # changed_files.py resolves the repo root from its own path, so it must run from the
+          # workspace; overwrite the PR's copy with the base version first.
+          script=.claude/skills/analyze-pr-changes/scripts/changed_files.py
+          mkdir -p "$(dirname "$script")"
+          git show "origin/$BASE_REF:$script" > "$script"
+          python3 -I "$script" --base "origin/$BASE_REF" > /dev/null
+          has=$(python3 -I -c 'import json; d = json.load(open(".agent-results/changes.json")); print("true" if d.get("has_testable_changes") is True else "false")')
+          echo "has_testable_changes=$has" >> "$GITHUB_OUTPUT"
+          echo "Testable changes: \`$has\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: changes
+          path: .agent-results/changes.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  tests:
+    # The PR's own test status, independent of the agent.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'agent/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0 # origin/<base> for the trusted run_tests.sh
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
           cache: npm
@@ -36,17 +103,427 @@ jobs:
         working-directory: frontend
         run: npm ci --ignore-scripts
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Run tests (base copy of run_tests.sh)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          script=.claude/skills/run-tests-and-coverage/scripts/run_tests.sh
+          mkdir -p "$(dirname "$script")"
+          git show "origin/$BASE_REF:$script" > "$script"
+          bash "$script" all pr
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: tests
+          path: |
+            .agent-results/results-pr.json
+            .agent-results/*-pr.log
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  generate:
+    needs: analyze
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'agent/') &&
+      needs.analyze.outputs.has_testable_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0 # full history so origin/<base_ref> exists for the diff
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend deps
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+
+      - uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: "PR mode: base origin/${{ github.base_ref }}. Analyze, create or update tests, run them and report."
           claude_args: "--agent test-engineer --settings .claude/test-agent.settings.json --max-turns 60"
 
-      - uses: actions/upload-artifact@v4
+      - name: Extract trusted scripts
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trusted"
+          git archive "origin/$BASE_REF" .github/scripts .claude | tar -x -C "$RUNNER_TEMP/trusted"
+
+      - name: Reset action-managed config paths to the PR head
+        run: |
+          # claude-code-action restores these paths from the base branch (removing ones the base
+          # lacks) and keeps the PR's versions under .claude-pr/. Undo that so the patch holds only
+          # the agent's edits; make_patch.sh excludes .claude and CLAUDE.md but not the others.
+          paths=(.claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md CLAUDE.local.md .husky)
+          git rm -r -q --cached --ignore-unmatch -- "${paths[@]}"
+          rm -rf -- .claude-pr "${paths[@]}"
+          mapfile -t tracked < <(git ls-tree --name-only HEAD -- "${paths[@]}")
+          if ((${#tracked[@]})); then git checkout HEAD -- "${tracked[@]}"; fi
+
+      - name: Build patch
+        run: bash "$RUNNER_TEMP/trusted/.github/scripts/make_patch.sh" .agent-results/tests.patch
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: agent-results
           path: .agent-results/
           include-hidden-files: true
           if-no-files-found: warn
+
+  verify:
+    needs: generate
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'agent/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      decision: ${{ steps.merge.outputs.decision }}
+      ok: ${{ steps.merge.outputs.ok }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Extract trusted scripts
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trusted"
+          git archive "origin/$BASE_REF" .github/scripts .claude | tar -x -C "$RUNNER_TEMP/trusted"
+
+      # Untrusted agent output: kept outside the workspace so nothing in it can pose as a CI result.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: agent-results
+          path: ${{ runner.temp }}/agent-results
+
+      - name: Guard patch
+        id: guard
+        run: |
+          set +e
+          python3 -I "$RUNNER_TEMP/trusted/.github/scripts/guard_patch.py" \
+            "$RUNNER_TEMP/agent-results/tests.patch" 2>&1 | tee "$RUNNER_TEMP/guard.txt"
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Check decision
+        run: |
+          python3 -I "$RUNNER_TEMP/trusted/.github/scripts/check_decision.py" \
+            "$RUNNER_TEMP/agent-results/decision.json" "$RUNNER_TEMP/agent-results/tests.patch" \
+            > "$RUNNER_TEMP/check.json" || true
+          cat "$RUNNER_TEMP/check.json"
+
+      - name: Apply patch
+        id: apply
+        if: steps.guard.outputs.exit == '0'
+        run: |
+          patch="$RUNNER_TEMP/agent-results/tests.patch"
+          if [ -s "$patch" ]; then git apply "$patch"; else echo "Empty patch: nothing to apply."; fi
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: steps.apply.outcome == 'success'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend deps
+        if: steps.apply.outcome == 'success'
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Install frontend deps
+        if: steps.apply.outcome == 'success'
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+
+      - name: Run tests (base copy of run_tests.sh)
+        id: run
+        if: steps.apply.outcome == 'success'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          script=.claude/skills/run-tests-and-coverage/scripts/run_tests.sh
+          mkdir -p "$(dirname "$script")"
+          git show "origin/$BASE_REF:$script" > "$script"
+          rm -f .agent-results/results-verify.json
+          bash "$script" all verify || true
+
+      - name: Merge verification results
+        id: merge
+        if: always()
+        env:
+          GUARD_EXIT: ${{ steps.guard.outputs.exit }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          mkdir -p .agent-results
+          python3 -I - <<'PY'
+          import json, os, shutil
+
+          def load(path):
+              try:
+                  with open(path, encoding="utf-8") as f:
+                      data = json.load(f)
+              except (OSError, ValueError):
+                  return {}
+              return data if isinstance(data, dict) else {}
+
+          tmp = os.environ["RUNNER_TEMP"]
+          check = load(f"{tmp}/check.json")
+          ran = os.environ.get("RUN_OUTCOME") == "success"
+          results_verify = load(".agent-results/results-verify.json") if ran else {}
+          guard_exit = int(os.environ.get("GUARD_EXIT") or 1)
+
+          verify = {**check, **results_verify, "guard_ok": guard_exit == 0}
+          suites = {s: (results_verify.get(s) or {}).get("status", "not_run") for s in ("backend", "frontend")}
+          suites_passed = all(status == "passed" for status in suites.values())
+          verify["ok"] = check.get("ok") is True and guard_exit == 0 and suites_passed
+
+          errors = list(check.get("errors") or [])
+          if not check:
+              errors.append("check_decision.py produced no result")
+          if guard_exit == 0 and os.environ.get("APPLY_OUTCOME") != "success":
+              errors.append("the patch did not apply to the PR head")
+          if guard_exit == 0 and not suites_passed:
+              errors.append("re-run in CI: " + ", ".join(f"{s} {st}" for s, st in suites.items()))
+          verify["errors"] = errors
+
+          with open(".agent-results/verify.json", "w", encoding="utf-8") as f:
+              json.dump(verify, f, indent=2)
+          for name in ("check.json", "guard.txt"):
+              if os.path.exists(f"{tmp}/{name}"):
+                  shutil.copy(f"{tmp}/{name}", f".agent-results/{name}")
+
+          decision = verify.get("decision")
+          decision = decision if decision in {"tests_added", "tests_updated", "no_tests_needed", "failed"} else ""
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"decision={decision}\nok={'true' if verify['ok'] else 'false'}\n")
+          print(json.dumps(verify, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: verify
+          path: |
+            .agent-results/verify.json
+            .agent-results/check.json
+            .agent-results/guard.txt
+            .agent-results/results-verify.json
+            .agent-results/*-verify.log
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      - name: Fail if verification failed
+        if: always() && steps.merge.outputs.ok != 'true'
+        run: |
+          echo "::error::Agent output failed verification (see verify.json in the 'verify' artifact)."
+          exit 1
+
+  publish:
+    needs: verify
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'agent/') &&
+      needs.verify.result == 'success' &&
+      contains(fromJSON('["tests_added", "tests_updated"]'), needs.verify.outputs.decision)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      bot_pr_url: ${{ steps.pr.outputs.url }}
+      not_published_reason: ${{ steps.workflows.outputs.reason }}
+    steps:
+      # The only checkout with credentials. No dependencies, tests or LLM run in this job.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Check for workflow changes
+        id: workflows
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # GITHUB_TOKEN has no `workflows` permission, so GitHub refuses to push a branch whose
+          # history changes .github/workflows/ relative to the base. Skip publishing instead of failing.
+          if git diff --quiet "origin/$BASE_REF...HEAD" -- .github/workflows; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=Tests verified but not published: PRs that modify workflows can't receive bot branches (GITHUB_TOKEN has no workflows permission)." >> "$GITHUB_OUTPUT"
+            echo "::notice::PR modifies .github/workflows/; skipping the bot branch and PR."
+          fi
+
+      - name: Extract trusted scripts
+        if: steps.workflows.outputs.changed == 'false'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trusted"
+          git archive "origin/$BASE_REF" .github/scripts .claude | tar -x -C "$RUNNER_TEMP/trusted"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.workflows.outputs.changed == 'false'
+        with:
+          name: agent-results
+          path: ${{ runner.temp }}/agent-results
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.workflows.outputs.changed == 'false'
+        with:
+          name: verify
+          path: ${{ runner.temp }}/verify
+
+      - name: Guard patch (defense in depth)
+        if: steps.workflows.outputs.changed == 'false'
+        run: python3 -I "$RUNNER_TEMP/trusted/.github/scripts/guard_patch.py" "$RUNNER_TEMP/agent-results/tests.patch"
+
+      - name: Commit and push agent branch
+        if: steps.workflows.outputs.changed == 'false'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          branch="agent/tests-pr-$PR_NUMBER"
+          git switch -c "$branch"
+          git apply --index "$RUNNER_TEMP/agent-results/tests.patch"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "test: add/update tests for PR #$PR_NUMBER (test-agent)"
+          git push --force origin "HEAD:refs/heads/$branch"
+
+      - name: Create or update bot PR
+        if: steps.workflows.outputs.changed == 'false'
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          branch="agent/tests-pr-$PR_NUMBER"
+          title="🧪 Tests for #$PR_NUMBER"
+          body="$RUNNER_TEMP/bot-pr-body.md"
+          python3 -I "$RUNNER_TEMP/trusted/.github/scripts/build_comment.py" \
+            --report "$RUNNER_TEMP/agent-results/report.md" \
+            --verify "$RUNNER_TEMP/verify/verify.json" \
+            --run-url "$RUN_URL" > "$body"
+          url=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$url" ]; then
+            gh pr edit "$url" --repo "$GITHUB_REPOSITORY" --base "$HEAD_REF" --title "$title" --body-file "$body"
+          else
+            url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$HEAD_REF" --head "$branch" \
+              --title "$title" --body-file "$body")
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Bot PR: $url" >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    needs: [analyze, tests, generate, verify, publish]
+    if: >-
+      always() &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'agent/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout of the base branch's scripts
+      pull-requests: write
+    steps:
+      # Base commit only (never the PR head), so the scripts here are the trusted copies.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true # absent when generate was skipped or failed early
+        with:
+          name: agent-results
+          path: ${{ runner.temp }}/agent-results
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true # absent when verify did not run
+        with:
+          name: verify
+          path: ${{ runner.temp }}/verify
+
+      - name: Build comment
+        env:
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
+          HAS_TESTABLE: ${{ needs.analyze.outputs.has_testable_changes }}
+          GENERATE_RESULT: ${{ needs.generate.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BOT_PR_URL: ${{ needs.publish.outputs.bot_pr_url }}
+          NOT_PUBLISHED_REASON: ${{ needs.publish.outputs.not_published_reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          args=(--plain-tests-status "$TESTS_RESULT" --run-url "$RUN_URL")
+          if [ -n "$BOT_PR_URL" ]; then args+=(--bot-pr-url "$BOT_PR_URL"); fi
+          if [ "$ANALYZE_RESULT" != "success" ]; then
+            args+=(--outcome failed --reason "The change analysis did not finish (see run logs).")
+          elif [ "$HAS_TESTABLE" != "true" ]; then
+            args+=(--outcome skipped --reason "No testable application code changed.")
+          elif [ "$GENERATE_RESULT" != "success" ]; then
+            args+=(--outcome failed --reason "The test agent did not finish (see run logs).")
+          elif [ "$VERIFY_RESULT" != "success" ]; then
+            args+=(--verify "$RUNNER_TEMP/verify/verify.json")
+          else
+            args+=(--report "$RUNNER_TEMP/agent-results/report.md" --verify "$RUNNER_TEMP/verify/verify.json")
+            if [ -n "$NOT_PUBLISHED_REASON" ]; then args+=(--reason "$NOT_PUBLISHED_REASON"); fi
+          fi
+          python3 -I trusted/.github/scripts/build_comment.py "${args[@]}" > "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post sticky comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash trusted/.github/scripts/sticky_comment.sh "$PR_NUMBER" "$RUNNER_TEMP/comment.md"
