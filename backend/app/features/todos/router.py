@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Path, Response
 
 from ...api.dependencies import Repository
-from .schemas import Todo, TodoCreate, TodoUpdate
+from .schemas import Todo, TodoCount, TodoCreate, TodoUpdate
 
 router = APIRouter(prefix="/api/todos", tags=["todos"])
 TodoId = Annotated[int, Path(gt=0)]
@@ -17,6 +17,15 @@ def list_todos(repo: Repository):
 @router.post("", response_model=Todo, status_code=201)
 def create_todo(payload: TodoCreate, repo: Repository):
     return repo.create(payload)
+
+
+@router.get("/count", response_model=TodoCount)
+def count_todos(repo: Repository):
+    todos = repo.list()
+    return TodoCount(
+        total=len(todos),
+        completed=sum(1 for todo in todos if todo.completed),
+    )
 
 
 @router.get("/{todo_id}", response_model=Todo)
