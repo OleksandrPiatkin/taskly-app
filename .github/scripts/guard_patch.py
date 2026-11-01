@@ -155,6 +155,10 @@ def parse_patch(text: str) -> tuple[list[dict], list[str]]:
                 i += 1
                 continue
             new = plus[4:]
+            # git appends a tab to ---/+++ paths that contain a space (as in GNU diff); strip one.
+            if " " in path:
+                old = old[:-1] if old.endswith("\t") else old
+                new = new[:-1] if new.endswith("\t") else new
             expected_old = "/dev/null" if entry["new"] else f"a/{path}"
             expected_new = "/dev/null" if deleted else f"b/{path}"
             if old != expected_old or new != expected_new:

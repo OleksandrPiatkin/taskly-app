@@ -8,6 +8,7 @@ structured report. It is built from small, reusable **skills**, so each step can
 - [Repository layout](#repository-layout)
 - [Setup](#setup)
 - [Running the agent](#running-the-agent)
+- [CI workflow](#ci-workflow)
 - [Outputs](#outputs)
 - [Safety model](#safety-model)
 - [Using skills directly](#using-skills-directly)
@@ -61,6 +62,14 @@ CLAUDE.md                                   project context: commands, conventio
       templates/pr-comment.md               report template
   hooks/guard_test_paths.py                 blocks writes outside test paths
   test-agent.settings.json                  agent-only permissions (allow/deny) + hook
+.github/
+  workflows/agent-tests.yml                 PR workflow (see CI workflow below)
+  scripts/
+    make_patch.sh                           agent's working-tree changes → tests.patch
+    guard_patch.py                          rejects patches outside test paths or with forbidden changes
+    check_decision.py                       decision.json must match the patch exactly
+    build_comment.py                        sanitized PR comment / bot PR body
+    sticky_comment.sh                       creates or updates the single PR comment
 ```
 
 `test-agent.settings.json` is deliberately **not** `.claude/settings.json`, so its restrictions
@@ -143,6 +152,25 @@ claude -p "PR mode: base origin/main. Analyze the changes, create or update test
 3. If a test is weak or wrong, prefer improving the skill (see below) and re-running over hand-editing.
 4. Commit the tests you accept. The agent never commits or pushes.
 
+## CI workflow
+
+`.github/workflows/agent-tests.yml` runs the agent on every pull request into `main` from a branch of
+this repository (drafts, forks and `agent/*` branches are skipped). Prerequisites, the job list and
+an example run are in [`SOLUTION.md`](../SOLUTION.md).
+
+| Job | Secrets / write access | Does |
+|---|---|---|
+| `analyze` | none | `changed_files.py`; skips the AI step when nothing is testable |
+| `tests` | none | the PR's own suites, without AI (the PR's red/green status) |
+| `generate` | `CLAUDE_CODE_OAUTH_TOKEN`, read-only token | runs this agent, then `make_patch.sh` → `tests.patch` |
+| `verify` | none | `guard_patch.py` + `check_decision.py`, applies the patch, re-runs both suites |
+| `publish` | `contents`/`pull-requests: write`, no AI, no tests | re-runs the guard, pushes `agent/tests-pr-<N>`, opens or updates the bot PR |
+| `report` | `pull-requests: write` | posts the sticky comment and the job summary |
+
+Jobs that check out the PR head run `.github/scripts/*` and `run_tests.sh` / `changed_files.py`
+from the base branch, never the PR's copies, so these must be on `main` before the workflow can run.
+To change a script, merge it to `main` first; PRs pick it up on their next run.
+
 ## Outputs
 
 Everything goes to `.agent-results/` (git-ignored):
@@ -166,7 +194,12 @@ Coverage reports also land in the usual places: `backend/coverage/` and `fronten
 | `test-agent.settings.json` | Bash limited to test runners, skill scripts and read-only git; denies `curl`, `wget`, `gh`, `git push/commit/checkout/reset`, package installs, `env`, reading `.env`, web tools |
 | `guard_test_paths.py` hook | writes allowed only to `backend/tests/**`, `frontend/src/**/*.test.ts(x)`, `frontend/src/test/**`, `.agent-results/**` (resolves `..` and symlinks) |
 | Deterministic scripts | file classification and test results come from scripts, not from the model's judgement |
-| Human review | you (or a reviewer, in CI) decide what gets merged |
+| CI: trusted scripts | helper scripts come from the base branch (`git archive`, run with `python3 -I`); PR changes to them have no effect on the PR's own run |
+| CI: least privilege | only `generate` sees the Claude token (read-only GitHub token); only `publish`/`report` can write, and they never run the model or PR code |
+| CI: `guard_patch.py` | the patch may only add or modify test files: no deletions, renames, symlinks, binaries, mode changes, `..`, pytest hooks/plugins or changes to `frontend/src/test/setup.ts`; run in `verify` and again in `publish` |
+| CI: `check_decision.py` + `verify` | `decision.json` must list exactly the files in the patch; the tests are re-run with the patch applied in a job with no secrets |
+| CI: sanitized comment | the agent's report is stripped of HTML and images, `@mentions` are neutralized, length is capped |
+| Human review | you (or a reviewer, in CI) decide what gets merged; generated tests arrive as a separate bot PR |
 
 ## Using skills directly
 
