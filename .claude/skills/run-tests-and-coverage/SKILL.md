@@ -6,7 +6,8 @@ description: Run the Taskly backend (pytest) and/or frontend (Vitest + typecheck
 # Run tests and coverage
 
 Always use the script — it runs each suite from its package directory (so the right coverage config
-is used), never stops at the first failing suite, and records real exit codes and numbers.
+is used), uses `backend/.venv/bin/python` when that virtualenv exists (falls back to `python` in CI),
+never stops at the first failing suite, and records real exit codes and numbers.
 
 ```sh
 bash .claude/skills/run-tests-and-coverage/scripts/run_tests.sh all        # or: backend | frontend

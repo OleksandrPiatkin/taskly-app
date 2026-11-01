@@ -16,7 +16,8 @@ description: Write or update pytest unit tests for the Taskly FastAPI backend (b
 4. Run only the file you changed first, then the full suite via `run-tests-and-coverage`:
 
    ```sh
-   cd backend && python -m pytest tests/features/todos/test_router.py -q
+   cd backend && .venv/bin/python -m pytest tests/features/todos/test_router.py -q   # local (venv)
+   cd backend && python -m pytest tests/features/todos/test_router.py -q             # CI (no venv)
    ```
 
 ## Rules

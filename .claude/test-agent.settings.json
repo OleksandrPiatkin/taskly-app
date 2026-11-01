@@ -4,6 +4,8 @@
       "Bash(bash .claude/skills/run-tests-and-coverage/scripts/run_tests.sh *)",
       "Bash(python3 .claude/skills/analyze-pr-changes/scripts/changed_files.py *)",
       "Bash(python -m pytest *)",
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(backend/.venv/bin/python -m pytest *)",
       "Bash(npx --no-install vitest *)",
       "Bash(npx vitest run *)",
       "Bash(npm test *)",
