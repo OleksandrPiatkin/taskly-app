@@ -23,17 +23,20 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" \
 cd -- "$root"
 git rev-parse --verify --quiet HEAD >/dev/null || { echo "error: HEAD does not exist" >&2; exit 2; }
 
-pathspec=(. ':(exclude).agent-results' ':(exclude).claude' ':(exclude)CLAUDE.md' ':(exclude).github')
+# .agent-results/ is gitignored, and `git add` exits 1 when a pathspec names an ignored path (even as
+# :(exclude)). `git add .` already skips ignored files, so exclude it only from the diff.
+add_pathspec=(. ':(exclude).claude' ':(exclude)CLAUDE.md' ':(exclude).github')
+diff_pathspec=("${add_pathspec[@]}" ':(exclude).agent-results')
 
 # Record untracked (non-ignored) files as intent-to-add so `git diff HEAD` shows them as new files.
-git add --intent-to-add -- "${pathspec[@]}"
+git add --intent-to-add -- "${add_pathspec[@]}"
 
 tmp="$(mktemp)"
 trap 'rm -f -- "$tmp"' EXIT
 # Fixed options so user/CI git config (renames, external diff, textconv, colour) cannot change the output.
 git -c core.quotepath=on -c diff.noprefix=false -c diff.mnemonicPrefix=false \
   diff --binary --full-index --no-renames --no-ext-diff --no-textconv --no-color \
-  --ignore-submodules=none HEAD -- "${pathspec[@]}" >"$tmp"
+  --ignore-submodules=none HEAD -- "${diff_pathspec[@]}" >"$tmp"
 mv -- "$tmp" "$out"
 trap - EXIT
 
