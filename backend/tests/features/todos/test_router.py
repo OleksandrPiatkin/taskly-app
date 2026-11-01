@@ -102,3 +102,20 @@ def test_delete_returns_404_when_task_is_missing(client, repository_mock):
     assert response.status_code == 404
     assert response.json() == {"detail": "Task not found."}
     repository_mock.delete.assert_called_once_with(7)
+
+
+def test_count_returns_total_and_completed(client, repository_mock, todo):
+    done = todo.model_copy(update={"id": 8, "completed": True})
+    repository_mock.list.return_value = [todo, done, done]
+    response = client.get("/api/todos/count")
+    assert response.status_code == 200
+    assert response.json() == {"total": 3, "completed": 2}
+    repository_mock.list.assert_called_once_with()
+    repository_mock.get.assert_not_called()
+
+
+def test_count_returns_zeros_when_there_are_no_tasks(client, repository_mock):
+    repository_mock.list.return_value = []
+    response = client.get("/api/todos/count")
+    assert response.status_code == 200
+    assert response.json() == {"total": 0, "completed": 0}
