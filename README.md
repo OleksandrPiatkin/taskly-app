@@ -1,5 +1,8 @@
 # Taskly App
 
+Unit-test agent and PR workflow: see [`SOLUTION.md`](SOLUTION.md) (overview, decisions, example run)
+and [`docs/TEST_AGENT.md`](docs/TEST_AGENT.md) (developer guide).
+
 ## Setup
 
 ```sh
