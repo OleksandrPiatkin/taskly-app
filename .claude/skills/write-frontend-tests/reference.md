@@ -2,6 +2,20 @@
 
 Copied from, or consistent with, the existing tests in `frontend/src/`.
 
+## Membership, not exact collections
+
+When the behaviour is "X is present", assert membership — never equality with a full collection
+(every rendered item, all object keys, the complete list of mock calls). Exact collections break on
+every unrelated addition.
+
+```ts
+expect(screen.getByRole('button', { name: 'Clear search' })).toBeInTheDocument()
+expect(payload).toMatchObject({ title: 'Write tests' })          // not: toEqual({...every key})
+expect(onChange).toHaveBeenCalledWith('done')                     // not: toEqual(onChange.mock.calls)
+```
+
+Use exact equality only when exactness *is* the behaviour (e.g. a request body with only writable fields).
+
 ## Components — mock the design system and children
 
 ```tsx
