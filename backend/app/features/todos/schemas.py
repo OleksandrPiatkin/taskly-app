@@ -40,3 +40,8 @@ class Todo(TodoCreate):
     id: int
     created_at: datetime
     updated_at: datetime
+
+
+class TodoCount(BaseModel):
+    total: int
+    completed: int
